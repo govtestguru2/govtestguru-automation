@@ -1,0 +1,68 @@
+name: Lesson Series (Daily Video)
+
+# Schedule: roz 06:00 IST aur 12:00 IST = 00:30 UTC aur 06:30 UTC (cron hamesha UTC me hota hai)
+on:
+  schedule:
+    - cron: "30 0 * * *"
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      privacy:
+        description: "Upload privacy"
+        required: false
+        default: "public"
+        type: choice
+        options:
+          - private
+          - unlisted
+          - public
+
+# Har series ka apna concurrency group — do run ek saath na takrayen
+concurrency:
+  group: lesson-series
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # state files commit karne ke liye
+    env:
+      # Fallback braces ke ANDAR hai — bahar likhne se value kharab hoti hai
+      PRIVACY: ${{ inputs.privacy || 'public' }}
+    steps:
+      - name: Repo checkout
+        uses: actions/checkout@v4
+
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dependencies install
+        run: pip install -r requirements.txt
+
+      - name: ffmpeg install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Engine chalao (slides + awaaz + video + upload)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python lesson_video.py --count 2 --privacy "$PRIVACY"
+
+      # STATE-LOSS DHYAAN: ye commit run ke aakhir me hota hai.
+      # Run chalte samay repo me haath se commit mat karo, warna ye push
+      # fail hokar state chupchaap kho sakti hai (Guide 5.3).
+      - name: State files commit karo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add lesson_state.json lesson_latest.txt lesson_next.txt
+          git diff --cached --quiet || git commit -m "state: lesson run ke baad update"
+          git push
