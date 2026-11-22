@@ -20,5 +20,6 @@ jobs:
               print('AUTH OK', r.status)
           except Exception as e:
               print('AUTH FAIL', e)
+              print('ERROR BODY', e.read().decode())
               raise SystemExit(1)
           "
