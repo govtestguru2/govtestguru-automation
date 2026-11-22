@@ -344,6 +344,80 @@ def build_slide(scene: dict, out_path: str, brand: str = "GovTestGuru",
     return out_path
 
 
+def _split_text_chunks(text: str, max_words: int = 60) -> list[str]:
+    """Narration text ko vakya-seemaon par todkar chunks banao — har chunk
+    ek text-slide par pura likha hua explanation banega (Priya, 22 Nov 2026:
+    student sunkar notes nahi likhega, sab likha bhi hona chahiye)."""
+    text = re.sub(r"\s+", " ", (text or "")).strip()
+    if not text:
+        return []
+    sentences = [s.strip() for s in
+                 re.split(r"(?<=[।.!?])\s+", text) if s.strip()]
+    chunks, current = [], ""
+    for sent in sentences:
+        words = sent.split()
+        if len(words) > max_words:  # ek hi vakya bahut lamba ho to tod do
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(words), max_words):
+                chunks.append(" ".join(words[i:i + max_words]))
+            continue
+        candidate = f"{current} {sent}".strip() if current else sent
+        if len(candidate.split()) <= max_words:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = sent
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def build_text_slide(head: str, chunk: str, out_path: str,
+                     topic: str = "") -> str:
+    """Design 15 frame ke andar pura likha hua explanation — notes-style
+    slide: upar chhota head, neeche poora text bade aksharon me."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (SLIDE_W, SLIDE_H), BG)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, SLIDE_W, 130], fill=NAVY)
+    _draw_mixed(draw, (90, 42), "GovTestGuru", 40, True, (255, 255, 255))
+    draw.rounded_rectangle([SLIDE_W - 420, 34, SLIDE_W - 90, 96], radius=31, fill=RED)
+    _draw_mixed(draw, (SLIDE_W - 388, 48), "रोज़ सुबह 6 बजे", 30, True, (255, 255, 255))
+
+    # Head — chhota, adhiktam 2 line
+    y = 172
+    for line in _wrap_mixed(draw, head, 44, True, SLIDE_W - 180)[:2]:
+        _draw_mixed(draw, (90, y), line, 44, True, HEAD_COLOR)
+        y += 58
+    y += 16
+    draw.rectangle([90, y, SLIDE_W - 90, y + 6], fill=RED)
+    y += 44
+
+    # Body — pura chunk; fit na ho to font chhota karo (min 36)
+    body_bottom = SLIDE_H - 130
+    size = 48
+    while size > 36:
+        lines = _wrap_mixed(draw, chunk, size, False, SLIDE_W - 180)
+        if y + len(lines) * (size + 20) <= body_bottom:
+            break
+        size -= 4
+    line_h = size + 20
+    for line in _wrap_mixed(draw, chunk, size, False, SLIDE_W - 180):
+        if y + line_h > body_bottom:
+            break
+        _draw_mixed(draw, (90, y), line, size, False, POINT_COLOR)
+        y += line_h
+
+    draw.rectangle([0, SLIDE_H - 90, SLIDE_W, SLIDE_H], fill=NAVY)
+    _draw_mixed(draw, (90, SLIDE_H - 64), topic or TICKER, 34, True, (255, 255, 255))
+
+    img.save(out_path)
+    return out_path
+
+
 # ---------------------------------------------------------------------------
 # Thumbnail — Design B "Dark Premium" (Priya ne 18 Nov 2026 ko FINAL chuna;
 # sample: your_files/thumbnail-designs/thumb-design-B.png se hu-ba-hu geometry)
@@ -492,22 +566,26 @@ def require_ffmpeg() -> str:
     return ffmpeg
 
 
-def assemble_video(slides: list[str], wavs: list[str], durations: list[float],
+def assemble_video(segments: list[tuple[str, str, float, float]],
                    out_path: str) -> str:
+    """Segments: (slide_path, wav_path, wav_offset_sec, duration_sec) —
+    ek scene ki kai slides usi scene ki awaaz ke alag-alag hisson par
+    dikhti hain (text slides ke liye, Priya 22 Nov 2026)."""
     ffmpeg = require_ffmpeg()
-    segments = []
+    seg_files = []
     list_path = os.path.join(WORK_DIR, "concat.txt")
-    for idx, (slide, wav, dur) in enumerate(zip(slides, wavs, durations), start=1):
-        seg = os.path.join(WORK_DIR, f"segment_{idx:02d}.mp4")
+    for idx, (slide, wav, offset, dur) in enumerate(segments, start=1):
+        seg = os.path.join(WORK_DIR, f"segment_{idx:03d}.mp4")
         subprocess.run(
-            [ffmpeg, "-y", "-loop", "1", "-i", slide, "-i", wav,
+            [ffmpeg, "-y", "-loop", "1", "-i", slide,
+             "-ss", f"{offset:.2f}", "-i", wav,
              "-c:v", "libx264", "-tune", "stillimage", "-c:a", "aac",
              "-b:a", "192k", "-pix_fmt", "yuv420p", "-t", f"{dur:.2f}", seg],
             check=True, capture_output=True,
         )
-        segments.append(seg)
+        seg_files.append(seg)
     with open(list_path, "w", encoding="utf-8") as fh:
-        for seg in segments:
+        for seg in seg_files:
             fh.write(f"file '{seg}'\n")
     subprocess.run(
         [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
@@ -550,14 +628,24 @@ def run(script_path: str, privacy: str = "private", upload: bool = True) -> str 
     script = load_and_validate_script(script_abs)
     os.makedirs(WORK_DIR, exist_ok=True)
 
-    # 1) Slides — neeche ki patti me sirf topic ka naam (Priya, 15 Nov 2026)
+    # 1) Slides — har scene: pehle head+points wali slide, phir usi scene ka
+    # pura explanation LIKHA HUA text slides par (Priya, 22 Nov 2026:
+    # student sunkar notes nahi likhega — sab likha bhi hona chahiye).
+    # Neeche ki patti me sirf topic ka naam (Priya, 15 Nov 2026).
     topic = str(script.get("topic") or _topic_from_title(script.get("yt_title", "")))
-    slides = []
+    scene_parts = []  # har scene: {"paths": [intro, text1, ...], "chunks": [...]}
     for idx, scene in enumerate(script["scenes"], start=1):
-        slide_path = os.path.join(WORK_DIR, f"slide_{idx:02d}.png")
-        build_slide(scene, slide_path, topic=topic)
-        slides.append(slide_path)
-    print(f"Slides taiyaar: {len(slides)}")
+        intro_path = os.path.join(WORK_DIR, f"slide_{idx:03d}.png")
+        build_slide(scene, intro_path, topic=topic)
+        paths = [intro_path]
+        chunks = _split_text_chunks(scene["text"], max_words=90)
+        for j, chunk in enumerate(chunks, start=1):
+            text_path = os.path.join(WORK_DIR, f"slide_{idx:03d}_t{j}.png")
+            build_text_slide(scene["head"], chunk, text_path, topic=topic)
+            paths.append(text_path)
+        scene_parts.append({"paths": paths, "chunks": chunks})
+    total_slides = sum(len(p["paths"]) for p in scene_parts)
+    print(f"Slides taiyaar: {total_slides} ({len(scene_parts)} scenes)")
 
     # 2) Awaaz — narration hamesha saaf kiya hua text (asal script text nahi)
     narration = [prepare_tts_text(scene["text"]) for scene in script["scenes"]]
@@ -566,9 +654,27 @@ def run(script_path: str, privacy: str = "private", upload: bool = True) -> str 
     wavs, durations = asyncio.run(_make_audio(narration))
     print(f"Audio taiyaar: {len(wavs)} scenes")
 
-    # 3) ffmpeg se video
+    # 3) ffmpeg se video — segments: intro slide ko scene ke samay ka
+    # chhota hissa, baaki samay text slides me shabdon ke anupaat me
+    segments = []
+    for part, wav, dur in zip(scene_parts, wavs, durations):
+        paths, chunks = part["paths"], part["chunks"]
+        if len(paths) == 1 or dur <= 6:
+            segments.append((paths[0], wav, 0.0, dur))
+            continue
+        intro_dur = min(max(dur * 0.18, 3.0), dur * 0.30)
+        rest = dur - intro_dur
+        weights = [max(len(c.split()), 1) for c in chunks]
+        total_w = sum(weights)
+        offset = 0.0
+        segments.append((paths[0], wav, offset, intro_dur))
+        offset += intro_dur
+        for path, w in zip(paths[1:], weights):
+            d = rest * w / total_w
+            segments.append((path, wav, offset, d))
+            offset += d
     video_path = os.path.join(WORK_DIR, "lesson_video.mp4")
-    assemble_video(slides, wavs, durations, video_path)
+    assemble_video(segments, video_path)
     print(f"Video taiyaar: {video_path}")
 
     if not upload:
