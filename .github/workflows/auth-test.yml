@@ -1,0 +1,24 @@
+name: Auth Test
+on:
+  workflow_dispatch:
+jobs:
+  auth-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Token refresh test
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python3 -c "
+          import os, urllib.request, urllib.parse, json
+          data = urllib.parse.urlencode({'client_id': os.environ['YT_CLIENT_ID'], 'client_secret': os.environ['YT_CLIENT_SECRET'], 'refresh_token': os.environ['YT_REFRESH_TOKEN'], 'grant_type': 'refresh_token'}).encode()
+          req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)
+          try:
+              r = urllib.request.urlopen(req)
+              print('AUTH OK', r.status)
+          except Exception as e:
+              print('AUTH FAIL', e)
+              raise SystemExit(1)
+          "
