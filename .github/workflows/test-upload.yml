@@ -1,0 +1,28 @@
+name: Test Upload (15s Private)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repo checkout
+        uses: actions/checkout@v4
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Dependencies install
+        run: pip install -r requirements.txt
+      - name: ffmpeg install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Test engine (15s video + private upload)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python lesson_video.py --script scripts/lesson_test_15s.json --privacy private
