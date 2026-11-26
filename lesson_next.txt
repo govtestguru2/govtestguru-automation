@@ -1,1 +1,1 @@
-scripts/lesson_021.json
+scripts/lesson_022.json
